@@ -186,7 +186,8 @@ static void test_socket_path_must_exist_and_be_a_socket(void) {
     check(skbd_ensure_socket(sock, err, sizeof err) == 0, err);
     check(chmod(dir, 0755) == 0, "chmod parent");
     err[0] = '\0';
-    check(skbd_ensure_socket(sock, err, sizeof err) == 0, err);
+    check(skbd_ensure_socket(sock, err, sizeof err) != 0, "parent mode");
+    check(strstr(err, "0700") != NULL, err);
     if (fd >= 0) {
         close(fd);
     }

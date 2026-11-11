@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -567,6 +568,60 @@ static void test_socket_path(void) {
     rmdir(dir);
 }
 
+/* A mode 0644 socket in a private directory connects. A public parent does not. */
+static void test_socket_parent_must_be_private(void) {
+    char dir[] = "/tmp/skbd-ipc-parent-XXXXXX";
+    char sock_path[160];
+    char link_path[160];
+    char err[256];
+    SkbdIpc ipc;
+    struct sockaddr_un addr;
+    int listener = -1;
+    int wrote;
+
+    ipc.fd = -1;
+    if (mkdtemp(dir) == NULL) {
+        CHECK(0);
+        return;
+    }
+    wrote = snprintf(sock_path, sizeof sock_path, "%s/sock", dir);
+    CHECK(wrote > 0 && (size_t)wrote < sizeof sock_path);
+    wrote = snprintf(link_path, sizeof link_path, "%s/link", dir);
+    CHECK(wrote > 0 && (size_t)wrote < sizeof link_path);
+    listener = socket(AF_UNIX, SOCK_STREAM, 0);
+    CHECK(listener >= 0);
+    memset(&addr, 0, sizeof addr);
+    addr.sun_family = AF_UNIX;
+    wrote = snprintf(addr.sun_path, sizeof addr.sun_path, "%s", sock_path);
+    CHECK(wrote > 0 && (size_t)wrote < sizeof addr.sun_path);
+    if (listener < 0 || bind(listener, (struct sockaddr *)&addr, sizeof addr) != 0 || listen(listener, 1) != 0) {
+        CHECK(0);
+    } else {
+        CHECK(chmod(sock_path, 0644) == 0);
+        memcpy(err, "keep", 5);
+        CHECK(skbd_ipc_connect(&ipc, sock_path, err, sizeof err) == 0);
+        CHECK(strcmp(err, "keep") == 0);
+        skbd_ipc_close(&ipc);
+        CHECK(symlink(sock_path, link_path) == 0);
+        err[0] = '\0';
+        CHECK(skbd_ipc_connect(&ipc, link_path, err, sizeof err) != 0);
+        CHECK(strstr(err, "not a socket") != NULL);
+        CHECK(ipc.fd < 0);
+        CHECK(chmod(dir, 0755) == 0);
+        err[0] = '\0';
+        CHECK(skbd_ipc_connect(&ipc, sock_path, err, sizeof err) != 0);
+        CHECK(strstr(err, "0700") != NULL);
+        CHECK(ipc.fd < 0);
+    }
+    skbd_ipc_close(&ipc);
+    if (listener >= 0) {
+        close(listener);
+    }
+    unlink(link_path);
+    unlink(sock_path);
+    rmdir(dir);
+}
+
 static void test_tree_and_inputs(void) {
     unsigned char *reply = NULL;
     size_t reply_len = 0;
@@ -764,6 +819,7 @@ int main(void) {
     test_node_and_input();
     test_events();
     test_socket_path();
+    test_socket_parent_must_be_private();
     test_tree_and_inputs();
     test_commands();
     test_event_short_read();

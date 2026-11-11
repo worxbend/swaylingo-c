@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Install a locally built bin/skbd, the systemd user unit, and the man page.
-# No download. The unit text matches the Rust writer and has no WatchdogSec.
+# No download. The unit has no WatchdogSec. It sets NoNewPrivileges,
+# PrivateTmp, RestrictAddressFamilies=AF_UNIX, and ProtectSystem=strict.
 #
 # The binary lands in ~/.local/bin/skbd. The unit is
 # $XDG_CONFIG_HOME/systemd/user/skbd.service when that variable is an
@@ -77,16 +78,29 @@ config_home_for() {
 }
 
 # canonical_unit_dir PASSWD_HOME CONFIG_HOME
-# Creates the systemd user directory, canonicalizes it, and refuses a
-# result that is not inside PASSWD_HOME.
+# Refuses a config home outside PASSWD_HOME before creating anything.
+# After mkdir, canonicalizes again and refuses a path that escaped.
 canonical_unit_dir() {
   local passwd_home_arg=$1
   local config_home=$2
-  local unitdir canon home_canon
+  local unitdir canon home_canon config_canon
   if [[ "$passwd_home_arg" != "/" ]]; then
     passwd_home_arg=${passwd_home_arg%/}
   fi
   home_canon=$(realpath -- "$passwd_home_arg") || return 1
+  if [[ -d "$config_home" ]]; then
+    config_canon=$(realpath -- "$config_home") || return 1
+  else
+    config_canon=$(realpath -m -- "$config_home") || return 1
+  fi
+  case "$config_canon" in
+    "${home_canon}" | "${home_canon}"/*)
+      ;;
+    *)
+      printf 'unit directory is outside the home directory: %s\n' "$config_canon" >&2
+      return 1
+      ;;
+  esac
   unitdir="${config_home}/systemd/user"
   mkdir -p -- "$unitdir"
   canon=$(realpath -- "$unitdir") || return 1
@@ -124,6 +138,10 @@ ExecStart=%h/.local/bin/skbd
 Restart=on-failure
 RestartSec=2
 RestartPreventExitStatus=2
+NoNewPrivileges=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX
+ProtectSystem=strict
 EOF
 }
 
@@ -180,6 +198,10 @@ self_check_unit() {
   grep -q '^ExecStart=%h/.local/bin/skbd$' "$tmp"
   grep -q '^Restart=on-failure$' "$tmp"
   grep -q '^RestartSec=2$' "$tmp"
+  grep -q '^NoNewPrivileges=yes$' "$tmp"
+  grep -q '^PrivateTmp=yes$' "$tmp"
+  grep -q '^RestrictAddressFamilies=AF_UNIX$' "$tmp"
+  grep -q '^ProtectSystem=strict$' "$tmp"
   if grep -q 'WatchdogSec' "$tmp"; then
     rm -f -- "$tmp"
     printf '%s: unit must not set WatchdogSec\n' "$script_name" >&2
@@ -207,9 +229,19 @@ self_check_unit_dir() {
     rm -rf -- "$tmp"
     exit 1
   fi
+  if [[ -e "${tmp}/outside/systemd" || -e "${tmp}/outside/systemd/user" ]]; then
+    rm -rf -- "$tmp"
+    printf '%s: refused unit path still created systemd/user\n' "$script_name" >&2
+    exit 1
+  fi
   ln -s "${tmp}/outside" "${home}/escape"
   if canonical_unit_dir "$home" "${home}/escape" >/dev/null 2>&1; then
     rm -rf -- "$tmp"
+    exit 1
+  fi
+  if [[ -e "${tmp}/outside/systemd" || -e "${home}/escape/systemd" ]]; then
+    rm -rf -- "$tmp"
+    printf '%s: refused unit path still created systemd/user\n' "$script_name" >&2
     exit 1
   fi
   rm -rf -- "$tmp"

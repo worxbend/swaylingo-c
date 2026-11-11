@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include "skbd/sway.h"
 
 #include "skbd/util.h"
@@ -5,6 +7,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -632,9 +635,10 @@ static int connect_socket(int fd, const struct sockaddr_un *addr, char *err, siz
     return 0;
 }
 
-int skbd_ipc_check_socket(const char *path, char *err, size_t err_cap) {
-    struct stat meta;
-    int saved;
+static int socket_dir_name(const char *path, char *dir, size_t dir_cap, char *name, size_t name_cap, char *err, size_t err_cap) {
+    const char *slash;
+    size_t dir_len;
+    size_t name_len;
 
     if (path == NULL || path[0] == '\0') {
         return skbd_err_fmt(err, err_cap, "SWAYSOCK path does not exist: %s", path == NULL ? "" : path);
@@ -642,24 +646,92 @@ int skbd_ipc_check_socket(const char *path, char *err, size_t err_cap) {
     if (path[0] != '/') {
         return skbd_err_fmt(err, err_cap, "SWAYSOCK path cannot be read: %s (not absolute)", path);
     }
-    if (lstat(path, &meta) != 0) {
-        saved = errno;
-        if (saved == ENOENT) {
-            return skbd_err_fmt(err, err_cap, "SWAYSOCK path does not exist: %s", path);
-        }
-        return skbd_err_fmt(err, err_cap, "SWAYSOCK path cannot be read: %s (%s)", path, strerror(saved));
-    }
-    if (!S_ISSOCK(meta.st_mode)) {
+    slash = strrchr(path, '/');
+    name_len = strlen(slash + 1);
+    if (name_len == 0 || strcmp(slash + 1, ".") == 0 || strcmp(slash + 1, "..") == 0) {
         return skbd_err_fmt(err, err_cap, "SWAYSOCK is not a socket: %s", path);
     }
-    if (meta.st_uid != geteuid()) {
-        return skbd_err_fmt(err, err_cap, "SWAYSOCK is not owned by this user: %s", path);
+    if (name_len >= name_cap) {
+        return skbd_err_fmt(err, err_cap, "SWAYSOCK path cannot be read: %s (File name too long)", path);
     }
+    if (slash == path) {
+        if (dir_cap < 2) {
+            return skbd_err_fmt(err, err_cap, "SWAYSOCK path cannot be read: %s (File name too long)", path);
+        }
+        dir[0] = '/';
+        dir[1] = '\0';
+    } else {
+        dir_len = (size_t)(slash - path);
+        if (dir_len >= dir_cap) {
+            return skbd_err_fmt(err, err_cap, "SWAYSOCK path cannot be read: %s (File name too long)", path);
+        }
+        memcpy(dir, path, dir_len);
+        dir[dir_len] = '\0';
+    }
+    memcpy(name, slash + 1, name_len + 1);
     return 0;
 }
 
-static int check_socket_path(const char *path, char *err, size_t err_cap) {
-    return skbd_ipc_check_socket(path, err, err_cap);
+/* Parent is pinned with skbd_open_private_dir. The socket inode is an O_PATH
+   fd so a later connect cannot be pointed at a replaced name. */
+static int open_pinned_socket(const char *path, int *out_fd, char *err, size_t err_cap) {
+    char dir[PATH_MAX];
+    char name[NAME_MAX + 1];
+    struct stat meta;
+    int dir_fd;
+    int fd;
+    int saved;
+
+    if (out_fd == NULL) {
+        return skbd_err_set(err, err_cap, "SWAYSOCK path cannot be read");
+    }
+    *out_fd = -1;
+    if (socket_dir_name(path, dir, sizeof dir, name, sizeof name, err, err_cap) != 0) {
+        return -1;
+    }
+    dir_fd = -1;
+    if (skbd_open_private_dir(dir, geteuid(), "SWAYSOCK directory", &dir_fd, err, err_cap) != 0) {
+        return -1;
+    }
+    do {
+        fd = openat(dir_fd, name, O_PATH | O_NOFOLLOW | O_CLOEXEC);
+    } while (fd < 0 && errno == EINTR);
+    saved = errno;
+    close(dir_fd);
+    if (fd < 0) {
+        if (saved == ENOENT) {
+            return skbd_err_fmt(err, err_cap, "SWAYSOCK path does not exist: %s", path);
+        }
+        if (saved == ELOOP) {
+            return skbd_err_fmt(err, err_cap, "SWAYSOCK is not a socket: %s", path);
+        }
+        return skbd_err_fmt(err, err_cap, "SWAYSOCK path cannot be read: %s (%s)", path, strerror(saved));
+    }
+    if (fstat(fd, &meta) != 0) {
+        saved = errno;
+        close(fd);
+        return skbd_err_fmt(err, err_cap, "SWAYSOCK path cannot be read: %s (%s)", path, strerror(saved));
+    }
+    if (!S_ISSOCK(meta.st_mode)) {
+        close(fd);
+        return skbd_err_fmt(err, err_cap, "SWAYSOCK is not a socket: %s", path);
+    }
+    if (meta.st_uid != geteuid()) {
+        close(fd);
+        return skbd_err_fmt(err, err_cap, "SWAYSOCK is not owned by this user: %s", path);
+    }
+    *out_fd = fd;
+    return 0;
+}
+
+int skbd_ipc_check_socket(const char *path, char *err, size_t err_cap) {
+    int fd = -1;
+
+    if (open_pinned_socket(path, &fd, err, err_cap) != 0) {
+        return -1;
+    }
+    close(fd);
+    return 0;
 }
 
 static int reply_accepted(const SkbdJson *root, int *accepted, char *err, size_t err_cap) {
@@ -751,9 +823,23 @@ int skbd_layout_command(uint32_t index, char *buf, size_t cap) {
     return 0;
 }
 
-int skbd_ipc_connect(SkbdIpc *ipc, const char *path, char *err, size_t err_cap) {
+static int connect_proc_fd(int fd, int path_fd, char *err, size_t err_cap) {
     struct sockaddr_un addr;
-    size_t path_len;
+    char proc[64];
+    int wrote;
+
+    wrote = snprintf(proc, sizeof proc, "/proc/self/fd/%d", path_fd);
+    if (wrote < 0 || (size_t)wrote >= sizeof proc || (size_t)wrote >= sizeof addr.sun_path) {
+        return skbd_err_set(err, err_cap, "ipc connect failed: File name too long");
+    }
+    memset(&addr, 0, sizeof addr);
+    addr.sun_family = AF_UNIX;
+    memcpy(addr.sun_path, proc, (size_t)wrote + 1);
+    return connect_socket(fd, &addr, err, err_cap);
+}
+
+int skbd_ipc_connect(SkbdIpc *ipc, const char *path, char *err, size_t err_cap) {
+    int path_fd;
     int fd;
 
     if (ipc == NULL) {
@@ -763,28 +849,26 @@ int skbd_ipc_connect(SkbdIpc *ipc, const char *path, char *err, size_t err_cap) 
         close(ipc->fd);
     }
     ipc->fd = -1;
-    if (check_socket_path(path, err, err_cap) != 0) {
+    path_fd = -1;
+    if (open_pinned_socket(path, &path_fd, err, err_cap) != 0) {
         return -1;
-    }
-    path_len = strlen(path);
-    if (path_len >= sizeof addr.sun_path) {
-        return skbd_err_fmt(err, err_cap, "SWAYSOCK path cannot be read: %s (File name too long)", path);
     }
     fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) {
+        close(path_fd);
         return skbd_err_fmt(err, err_cap, "ipc connect failed: %s", strerror(errno));
     }
     if (set_cloexec(fd, err, err_cap) != 0) {
         close(fd);
+        close(path_fd);
         return -1;
     }
-    memset(&addr, 0, sizeof addr);
-    addr.sun_family = AF_UNIX;
-    memcpy(addr.sun_path, path, path_len + 1);
-    if (connect_socket(fd, &addr, err, err_cap) != 0) {
+    if (connect_proc_fd(fd, path_fd, err, err_cap) != 0) {
         close(fd);
+        close(path_fd);
         return -1;
     }
+    close(path_fd);
     ipc->fd = fd;
     return 0;
 }

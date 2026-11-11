@@ -1,7 +1,10 @@
 #include "skbd/runtime.h"
 
+#include <signal.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 static int fails;
 
@@ -405,6 +408,70 @@ static void test_removed_watched_keyboard_is_replaced(void) {
     skbd_memory_free(&memory);
 }
 
+/* SIGHUP wakes an idle wait and leaves the reload flag set. */
+static void test_sighup_wakes_an_idle_fd(void) {
+    int fds[2];
+    int ready;
+    pid_t child;
+    char err[128];
+
+    alarm(2);
+    check(pipe(fds) == 0, "pipe");
+    skbd_reload_requested = 0;
+    err[0] = '\0';
+    check(skbd_install_sighup(err, sizeof err) == 0, err);
+    child = fork();
+    check(child >= 0, "fork");
+    if (child == 0) {
+        if (kill(getppid(), SIGHUP) != 0) {
+            _exit(1);
+        }
+        _exit(0);
+    }
+    if (child > 0) {
+        check(waitpid(child, NULL, 0) == child, "wait child");
+    }
+    ready = 1;
+    err[0] = '\0';
+    check(skbd_wait_readable(fds[0], &ready, err, sizeof err) == 0, err);
+    check(ready == 0, "idle");
+    check(skbd_reload_requested != 0, "reload flag");
+    close(fds[0]);
+    close(fds[1]);
+    skbd_reload_requested = 0;
+    alarm(0);
+}
+
+/* A readable fd is ready. A closed pipe is a failed wait. */
+static void test_wait_readable_and_closed(void) {
+    int fds[2];
+    int ready;
+    char err[128];
+    char byte;
+
+    alarm(2);
+    check(pipe(fds) == 0, "pipe");
+    byte = 'x';
+    check(write(fds[1], &byte, 1) == 1, "write");
+    ready = 0;
+    memcpy(err, "keep", 5);
+    check(skbd_wait_readable(fds[0], &ready, err, sizeof err) == 0, err);
+    check(ready == 1, "readable");
+    check(strcmp(err, "keep") == 0, err);
+    close(fds[1]);
+    ready = 0;
+    memcpy(err, "keep", 5);
+    check(skbd_wait_readable(fds[0], &ready, err, sizeof err) == 0, err);
+    check(ready == 1, "last byte");
+    check(read(fds[0], &byte, 1) == 1, "drain");
+    ready = 1;
+    err[0] = '\0';
+    check(skbd_wait_readable(fds[0], &ready, err, sizeof err) != 0, "closed");
+    check(ready == 0, "not ready");
+    close(fds[0]);
+    alarm(0);
+}
+
 int main(void) {
     test_app_id_wins_and_empty_falls_through_to_class();
     test_is_view_needs_a_container_and_an_app_window_or_pid();
@@ -418,5 +485,7 @@ int main(void) {
     test_close_syncs_only_the_focused_window();
     test_startup_keeps_the_active_layout_for_every_open_view();
     test_removed_watched_keyboard_is_replaced();
+    test_sighup_wakes_an_idle_fd();
+    test_wait_readable_and_closed();
     return fails == 0 ? 0 : 1;
 }

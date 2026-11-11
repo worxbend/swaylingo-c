@@ -127,11 +127,13 @@ typedef struct {
    The buffer receives: input type:keyboard xkb_switch_layout <index> */
 int skbd_layout_command(uint32_t index, char *buf, size_t cap);
 
-/* Absolute path. lstat, so a final symlink is not a socket. The socket must
-   be owned by this user. Mode and parent mode are not checked. */
+/* Absolute path. The parent directory must be mode 0700 and owned by this
+   user. The socket is opened with O_NOFOLLOW and must be owned by this user.
+   The socket mode is not checked. */
 int skbd_ipc_check_socket(const char *path, char *err, size_t err_cap);
 
-/* Rust: connect. path is the SWAYSOCK filesystem path. Does not read the environment. */
+/* Rust: connect. path is the SWAYSOCK filesystem path. Does not read the environment.
+   Connects through the inode pinned by skbd_ipc_check_socket's rules. */
 int skbd_ipc_connect(SkbdIpc *ipc, const char *path, char *err, size_t err_cap);
 
 void skbd_ipc_close(SkbdIpc *ipc);

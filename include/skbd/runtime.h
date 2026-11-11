@@ -118,7 +118,8 @@ SkbdAction skbd_apply_input(SkbdMemory *memory, SkbdInputChange change, const Sk
 int skbd_classify_swaysock(SkbdSockKind kind, const char *path, int service, char *path_out, size_t path_cap, SkbdStopKind *stop, char *err, size_t err_cap);
 
 /* Rust: ensure_socket. The path must be an absolute socket owned by this user.
-   A final symlink is not followed. Parent mode is not checked. */
+   A final symlink is not followed. The parent directory must be mode 0700
+   and owned by this user. The socket mode is not checked. */
 int skbd_ensure_socket(const char *path, char *err, size_t err_cap);
 
 /* Rust: refuse_root. euid 0 fails. The message says this is a user service. */
@@ -159,5 +160,10 @@ int skbd_install_sighup(char *err, size_t err_cap);
 
 /* Returns 1 when SIGHUP has been stored and not yet cleared by the caller. */
 int skbd_reload_pending(void);
+
+/* Wait until fd is readable or SIGHUP is delivered. *ready is 1 when fd is
+   readable and 0 when only SIGHUP arrived. SIGHUP stays blocked except during
+   this wait. A hangup with no pending byte fails, as does POLLERR or POLLNVAL. */
+int skbd_wait_readable(int fd, int *ready, char *err, size_t err_cap);
 
 #endif

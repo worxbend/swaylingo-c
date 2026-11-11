@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include "skbd/runtime.h"
 
 #include "skbd/util.h"
@@ -6,6 +8,7 @@
 #include <fcntl.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -403,6 +406,7 @@ static int apply_watched_input(SkbdMemory *memory, SkbdInputChange change, const
 
 int skbd_install_sighup(char *err, size_t err_cap) {
     struct sigaction action;
+    sigset_t blocked;
 
     memset(&action, 0, sizeof action);
     if (sigemptyset(&action.sa_mask) != 0) {
@@ -413,11 +417,56 @@ int skbd_install_sighup(char *err, size_t err_cap) {
     if (sigaction(SIGHUP, &action, NULL) != 0) {
         return skbd_err_fmt(err, err_cap, "SIGHUP handler failed: %s", strerror(errno));
     }
+    /* Blocked here so SA_RESTART cannot swallow SIGHUP inside read or write.
+       skbd_wait_readable unblocks it only for ppoll, which is not restarted. */
+    if (sigemptyset(&blocked) != 0 || sigaddset(&blocked, SIGHUP) != 0 || sigprocmask(SIG_BLOCK, &blocked, NULL) != 0) {
+        return skbd_err_fmt(err, err_cap, "SIGHUP block failed: %s", strerror(errno));
+    }
     return 0;
 }
 
 int skbd_reload_pending(void) {
     return skbd_reload_requested != 0;
+}
+
+int skbd_wait_readable(int fd, int *ready, char *err, size_t err_cap) {
+    struct pollfd polled;
+    sigset_t mask;
+    int rc;
+
+    if (ready == NULL) {
+        return skbd_err_set(err, err_cap, "wait output is missing");
+    }
+    *ready = 0;
+    if (fd < 0) {
+        return skbd_err_set(err, err_cap, "sway event socket is closed");
+    }
+    if (sigprocmask(SIG_SETMASK, NULL, &mask) != 0 || sigdelset(&mask, SIGHUP) != 0) {
+        return skbd_err_fmt(err, err_cap, "sway event wait failed: %s", strerror(errno));
+    }
+    polled.fd = fd;
+    polled.events = POLLIN;
+    polled.revents = 0;
+    do {
+        rc = ppoll(&polled, 1, NULL, &mask);
+    } while (rc < 0 && errno == EINTR && skbd_reload_requested == 0);
+    if (rc < 0) {
+        if (errno == EINTR) {
+            return 0;
+        }
+        return skbd_err_fmt(err, err_cap, "sway event wait failed: %s", strerror(errno));
+    }
+    if ((polled.revents & (POLLERR | POLLNVAL)) != 0) {
+        return skbd_err_set(err, err_cap, "sway event socket is closed");
+    }
+    if ((polled.revents & POLLIN) != 0) {
+        *ready = 1;
+        return 0;
+    }
+    if ((polled.revents & POLLHUP) != 0) {
+        return skbd_err_set(err, err_cap, "sway event socket is closed");
+    }
+    return 0;
 }
 
 void skbd_parsed_free(SkbdParsed *parsed) {
@@ -1388,18 +1437,26 @@ done:
     return rc;
 }
 
-/* shortcut: SIGHUP reloads on the next Sway event, upgrade when the read can be woken */
 static int event_loop(SkbdIpc *commands, SkbdIpc *events, SkbdMemory *memory, const SkbdOptions *options, SkbdStopKind *stop, char *err, size_t err_cap) {
-    maybe_reload(commands, memory, options);
     for (;;) {
         SkbdEvent *event;
         SkbdAction action;
+        int ready;
         int read_rc;
 
+        maybe_reload(commands, memory, options);
+        ready = 0;
+        if (skbd_wait_readable(events->fd, &ready, err, err_cap) != 0) {
+            *stop = SKBD_STOP_FAIL;
+            return -1;
+        }
+        maybe_reload(commands, memory, options);
+        if (!ready) {
+            continue;
+        }
         event = NULL;
         memset(&action, 0, sizeof action);
         read_rc = skbd_ipc_read_event(events, &event, err, err_cap);
-        maybe_reload(commands, memory, options);
         if (read_rc != 0) {
             skbd_event_free(event);
             *stop = SKBD_STOP_FAIL;
