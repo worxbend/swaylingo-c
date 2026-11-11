@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 128 128" role="img">
+  <title>swaylingo</title>
+  <rect width="128" height="128" fill="#1c1712"/>
+  <rect x="46" y="18" width="64" height="52" fill="#14110e" stroke="#6e655a" stroke-width="3"/>
+  <rect x="16" y="46" width="72" height="64" fill="#14110e" stroke="#9ec4d6" stroke-width="3"/>
+  <circle cx="34" cy="66" r="6.5" fill="#e2a322"/>
+</svg>

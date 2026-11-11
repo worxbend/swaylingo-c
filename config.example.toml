@@ -1,0 +1,11 @@
+# Keys are a Wayland app_id or an X11 WM_CLASS.
+# Quote a key that contains a dot: "org.telegram.desktop" = "ua"
+
+fallback = "us"
+
+[apps]
+Telegram = "ua"
+discord = "ua"
+jetbrains-idea = "us"
+Code = "us"
+code = "us"

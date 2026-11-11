@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="560" viewBox="0 0 1280 560" role="img">
+  <title>The focused window is English. The window behind keeps Ukrainian.</title>
+  <rect width="1280" height="560" fill="#1c1712"/>
+  <rect x="570" y="96" width="300" height="210" fill="#14110e" stroke="#6e655a" stroke-width="3"/>
+  <rect x="410" y="200" width="400" height="280" fill="#14110e" stroke="#9ec4d6" stroke-width="3"/>
+  <circle cx="478" cy="268" r="16" fill="#e2a322"/>
+  <text x="720" y="175" fill="#b3a794" font-family="Besley" font-size="42" letter-spacing="-0.6" text-anchor="middle">Ukrainian</text>
+  <text x="610" y="430" fill="#f6f1e7" font-family="Besley" font-size="56" letter-spacing="-1.2" text-anchor="middle">English</text>
+</svg>

@@ -1,0 +1,178 @@
+.TH SKBD 1 "2026-11-11" "swaylingo 0.4.0" "User Commands"
+.SH NAME
+skbd \- remember the Sway keyboard layout for each window
+.SH SYNOPSIS
+.B skbd
+[\fB\-h\fR]
+[\fB\-\-help\fR]
+[\fB\-\-version\fR]
+[\fB\-\-verbose\fR]
+[\fB\-\-config\fR \fIPATH\fR]
+[\fB\-\-default\fR \fITOKEN\fR]
+.SH DESCRIPTION
+.B skbd
+watches Sway window focus and puts back the XKB layout that window last used.
+Sway still owns the keymap. This program only runs
+.BR xkb_switch_layout .
+.PP
+A window that is already remembered keeps its layout. A window seen for the
+first time uses the rule for its app, or the fallback layout. An empty
+desktop uses the fallback. With no config file, the fallback is layout 0,
+the first name in
+.BR xkb_layout .
+.PP
+The window that is focused when the daemon starts keeps the layout Sway is
+using at that moment. It does not pick up an app rule.
+.PP
+An X11 dialog whose
+.B transient_for
+is the X11 id of a remembered window copies that window's layout and does
+not use an app rule.
+.SH OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Print the flags and exit 0.
+.TP
+.B \-\-version
+Print the version and exit 0.
+.TP
+.B \-\-verbose
+Print focus, layout, and switch lines on stderr.
+One keyboard can show up as several Sway devices, so one Super+Space prints
+several lines.
+.TP
+.BI \-\-config " PATH"
+Read
+.I PATH
+instead of the default config file.
+The file must exist. A missing file exits 2.
+.TP
+.BI \-\-default " TOKEN"
+Layout for a new window that has no app rule, and for an empty desktop.
+Overrides the
+.B fallback
+key. Same token rules as the config file.
+.PP
+An unknown flag, or a flag that is missing its value, is an error on stderr
+and exits 2.
+Help and version go to stdout and exit 0.
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/swaylingo/config.toml
+Config file when
+.B XDG_CONFIG_HOME
+is set and not empty.
+.TP
+.I ~/.config/swaylingo/config.toml
+Config file when
+.B XDG_CONFIG_HOME
+is unset or empty.
+A missing file at the default path is an empty config, not an error.
+.TP
+.I config.example.toml
+Example shipped with the source. It is not installed.
+.TP
+.I ~/.local/share/man/man1/skbd.1
+This page, installed by
+.BR install.sh .
+.SH CONFIGURATION
+The file is TOML. Two keys are read. Any other key is an error, and the
+error names the file.
+.PP
+.B fallback
+is a string or a non-negative integer. It is the layout for a new window
+with no app rule, and for an empty desktop.
+.B \-\-default
+replaces it.
+.PP
+.B apps
+is a table of string to string or integer. The key is the Wayland
+.B app_id
+or the X11
+.B WM_CLASS
+(the
+.B class
+field of the window properties).
+The match is exact. Quote a key that contains a dot, or TOML will read it
+as a nested table.
+.PP
+A remembered window does not consult
+.B apps
+again. The layout stored on that window wins, including a window that was
+already focused at startup.
+.PP
+Example:
+.PP
+.EX
+fallback = "us"
+
+[apps]
+Telegram = "ua"
+discord = "ua"
+jetbrains-idea = "us"
+Code = "us"
+code = "us"
+.EE
+.SH LAYOUT TOKENS
+A token is resolved against the keyboard's
+.B xkb_layout_names
+from Sway.
+.IP \(bu 2
+An integer, or a decimal string without a leading zero, is a layout index.
+It must be in range.
+.IP \(bu 2
+Otherwise an exact layout name matches. Case is ignored only when the
+letters are the same word.
+.IP \(bu 2
+Otherwise a short code matches a language in the name.
+.B us
+and
+.B en
+mean English, and prefer a name containing
+.BR (US) .
+.B ua
+and
+.B uk
+mean Ukrainian.
+.B ru
+means Russian,
+.B de
+German,
+.B pl
+Polish, and
+.B fr
+French.
+.PP
+If nothing matches, skbd exits 2 and lists the index and name of each
+known layout. A parse error names the file.
+.SH SIGNALS
+.TP
+.B SIGHUP
+Reloads the config file and replaces the fallback and the app rules, leaves
+remembered windows in place, and keeps the previous rules when the file is
+bad.
+.SH EXIT STATUS
+.TP
+.B 0
+Help, version, or the process ran until Sway shut down.
+An unset or empty
+.B SWAYSOCK
+under systemd exits 0.
+.TP
+.B 1
+Sway could not be used.
+An unset or empty
+.B SWAYSOCK
+outside systemd exits 1.
+The same unset or empty
+.B SWAYSOCK
+under systemd exits 0.
+Running as root exits 1.
+.TP
+.B 2
+Bad flags, a config file that could not be read or parsed, or a layout
+token that matched nothing.
+.SH SEE ALSO
+.BR sway (1),
+.BR sway (5),
+.BR sway-input (5)
