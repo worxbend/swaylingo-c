@@ -38,7 +38,7 @@ const char skbd_help[] =
     "us, en, ua, uk, ru, de, pl, fr. App keys are a Wayland app_id or an X11\n"
     "WM_CLASS.\n";
 
-const char skbd_version[] = "0.4.0";
+const char skbd_version[] = "0.4.1";
 
 volatile sig_atomic_t skbd_reload_requested = 0;
 

@@ -21,7 +21,7 @@
 /* Rust: HELP. The text lists the flags. */
 extern const char skbd_help[];
 
-/* Rust: CARGO_PKG_VERSION. The string is 0.4.0. */
+/* Rust: CARGO_PKG_VERSION. The string is 0.4.1. */
 extern const char skbd_version[];
 
 /* Rust: RELOAD_REQUESTED. The SIGHUP handler may only store this flag. */

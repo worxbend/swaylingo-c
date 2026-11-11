@@ -18,7 +18,7 @@ Focus Firefox in English. Switch to Telegram and type Ukrainian. Come back. Engl
 
 <img src="https://img.shields.io/badge/C11-POSIX-1c1917?style=flat-square&labelColor=7eb8d4&color=1c1917" alt="C11 and POSIX">
 <img src="https://img.shields.io/badge/dependencies-none-1c1917?style=flat-square&labelColor=e8a317&color=1c1917" alt="No third-party dependencies">
-<img src="https://img.shields.io/badge/version-0.4.0-1c1917?style=flat-square&labelColor=c4b8a5&color=1c1917" alt="Version 0.4.0">
+<img src="https://img.shields.io/badge/version-0.4.1-1c1917?style=flat-square&labelColor=c4b8a5&color=1c1917" alt="Version 0.4.1">
 
 <br>
 
@@ -172,7 +172,7 @@ skbd --default TOKEN
 | Flag | What it does |
 | --- | --- |
 | `--verbose` | Print focus, layout, and switch lines. |
-| `--version` | Print `0.4.0`. |
+| `--version` | Print `0.4.1`. |
 | `--config PATH` | Read this file. A missing explicit path exits 2. |
 | `--default TOKEN` | Override `fallback` for this process. |
 
